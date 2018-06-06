@@ -8,56 +8,25 @@
 #include <thread>
 #include <set>
 
-u_int8_t get_byte(char*& st) {
-    u_int8_t res = 0;
-    while(true) {
-        if (*st != 0) {
-            char c = *st;
-            st++;
-            if (c >= '0' && c <= '9') {
-                res = res * 10;
-                res += c - '0';
-            } else {
-                return res;
-            }
-        } else {
-            return res;
-        }
-    }
-}
+#include <string.h>
 
-u_int32_t get_ip4(char* st) {
-    u_int32_t res = 0;
-    res |= get_byte(st);
-    res <<= 8;
-    res |= get_byte(st);
-    res <<= 8;
-    res |= get_byte(st);
-    res <<= 8;
-    res |= get_byte(st);
-    return res;
-}
+#include "utils.h"
 
-int main(int argc, char** argv) {
-    int sock, listener;
+int _main(int argc, char** argv) {
     sockaddr_in addr;
 
     u_int32_t addr_ip4;
     if (argc >= 2) {
         addr_ip4 = get_ip4(argv[1]);
     } else {
-        std::cerr << "address to listen to: ";
+        std::cout << "address to listen to: ";
         std::string st;
         std::cin >> st;
         char* s = &st[0];
         addr_ip4 = get_ip4(s);
     }
 
-    listener = socket(AF_INET, SOCK_STREAM, 0);
-    if (listener < 0) {
-        perror("socket");
-        exit(EXIT_FAILURE);
-    }
+    socket_t listener;
 
     addr.sin_family = AF_INET;
     addr.sin_port = htons(1337);
@@ -73,10 +42,9 @@ int main(int argc, char** argv) {
     std::set<int> inds = {1, 2, 3, 4};
     while(true) {
         std::cout << "listening" << std::endl; 
-        sock = accept(listener, 0, 0);
-        if (sock < 0) {
-            perror("accept");
-            exit(EXIT_FAILURE);
+        int _sock = accept(listener, 0, 0);
+        if (_sock < 0) {
+            throw std::runtime_error("While accepting an error occurred: "_str + strerror(errno));
         }
 
         if (inds.size() == 0) {
@@ -84,23 +52,32 @@ int main(int argc, char** argv) {
         }
         int ind = *inds.begin();
         inds.erase(inds.begin());
-        std::thread([sock, ind]{
+        std::thread([_sock, ind, &inds]{
+            socket_t sock(_sock);
             while(true) {
-                int read;
                 std::cout << ind << " awaits" << std::endl;
-                std::string st;
-                st.resize(4096, '\0');
-                read = recv(sock, &st[0], 4096, 0);
-                if (read <= 0) {
-                    std::cout << "connection #" << ind << " was closed";
+                std::string st = blocking_recv(sock);
+                if (st == "exit") {
+                    std::cout << "connection #" << ind << " was closed\n";
                     break;
                 }
-                st[read] = 0;
                 std::cout << ind << " has recieved: '" << st << "'" << std::endl;
-                send(sock, st.data(), read, 0);
+                blocking_send(sock, st);
             }
-            close(sock);
+            inds.insert(ind);
         }).detach();
     }    
     return 0;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return _main(argc, argv);
+    } catch (std::runtime_error e) {
+        std::cerr << e.what();
+        return -1;
+    } catch (std::invalid_argument e) {
+        std::cerr << e.what();
+        return -1;
+    }
 }

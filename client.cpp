@@ -1,45 +1,19 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <stdlib.h>
 #include <unistd.h>
 
-#include <iostream>
+#include <stdlib.h>
 #include <string.h>
 
-u_int8_t get_byte(char*& st) {
-    u_int8_t res = 0;
-    while(true) {
-        if (*st != 0) {
-            char c = *st;
-            st++;
-            if (c >= '0' && c <= '9') {
-                res = res * 10;
-                res += c - '0';
-            } else {
-                return res;
-            }
-        } else {
-            return res;
-        }
-    }
-}
+#include <iostream>
+#include <string>
+#include <exception>
+#include <algorithm>
 
-u_int32_t get_ip4(char* st) {
-    u_int32_t res = 0;
-    res |= get_byte(st);
-    res <<= 8;
-    res |= get_byte(st);
-    res <<= 8;
-    res |= get_byte(st);
-    res <<= 8;
-    res |= get_byte(st);
-    return res;
-}
+#include "utils.h"
 
-int main(int argc, char** argv) {
-    char buffer[4096];
-    char buf[4096];
+int _main(int argc, char** argv) {
     u_int32_t addr_ip4;
     if (argc >= 2) {
         addr_ip4 = get_ip4(argv[1]);
@@ -50,40 +24,45 @@ int main(int argc, char** argv) {
         char* s = &st[0];
         addr_ip4 = get_ip4(s);
     }
-    int sock;
-    struct sockaddr_in addr;
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        exit(EXIT_FAILURE);
-    }
+    socket_t sock;
+    sockaddr_in addr;
 
     addr.sin_family = AF_INET;
     addr.sin_port = htons(1337);
     addr.sin_addr.s_addr = htonl(addr_ip4);
-
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("connecting");
-        exit(EXIT_FAILURE);
+    timeval timeout{2, 0};
+    if (-1 == setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout))) {
+        throw std::runtime_error("While setting socket an error occurred: "_str + strerror(errno));
+    }
+    if (connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        throw std::runtime_error("While connecting an error occurred: "_str + strerror(errno));
     }
     while(true) {
         std::cout << "enter message: ";
         std::string st;
-        std::cin >> st;
-        if (st == "exit") {
-            close(sock);
-            std::cout << "connection is closed\n";
-            break;
-        }
+        std::getline(std::cin, st);
 
         std::cout << "sending" << std::endl;
-        send(sock, st.data(), st.size(), 0);
-        int read = 0;
-        st.resize(4096, '\0');
+        blocking_send(sock, st);
+        if (st == "exit") {
+            break;
+        }
         std::cout << "receiving..." << std::endl;
-        read = recv(sock, &st[0], 4096, 0);
-        st[read] = 0;
-        std::cout << "received: " << st; 
+        st = blocking_recv(sock);
+        std::cout << "received: " << st;
     }
     return 0;
 }
+
+int main(int argc, char** argv) {
+    try {
+        return _main(argc, argv);
+    } catch (std::runtime_error e) {
+        std::cerr << e.what();
+        return -1;
+    } catch (std::invalid_argument e) {
+        std::cerr << e.what();
+        return -1;
+    }
+}
+
